@@ -21,13 +21,7 @@ source("../src/mapbox_key.R")
 
 # define coordinate reference systems (st_crs() collects crs from files)
 my.palette <- RColorBrewer::brewer.pal(9, 'Set1')
-my.greys <- RColorBrewer::brewer.pal(9, 'Greys')
 city.trio <- c(my.palette[3], my.palette[5], my.palette[4]) 
-trio <- c(my.palette[3], my.palette[2], my.palette[1])
-ocean <- my.greys[4]
-land <- my.greys[2]
-shore <- my.greys[6]
-map.diameter <- 60000
 
 # read data if required
 if (exists("csv_off_street_car_parking_2016")) {
@@ -89,7 +83,6 @@ if(exists("sf_points")) {
   points <- sf_points
 } else {
   points <- parking %>%
-    transmute(bays = round(bays/ 1000)) %>%
     filter(bays > 0) %>% 
   st_sample(size = .$bays, type = "random", exact = TRUE) %>% 
     st_as_sf()
