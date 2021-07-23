@@ -7,11 +7,9 @@ output: pdf_document
 
 ```{r setup, include=FALSE}
 library(viridisLite)
-library(spdep)
 library(knitr)
 library(rgdal)
 library(tidyverse)
-library(janitor)
 library(ggplot2)
 library(sf)
 library(tmap)
@@ -103,10 +101,26 @@ da <- csv_connor_s_da_data %>%
   gather() %>% 
   transmute(inner_city = ifelse(key == "Sydney", "Inner Sydney", ifelse(key == "Melbourne", "Inner Melbourne", "Inner Brisbane")),
     av_bays = value)
+#grid
+my_grid <- function(sf) {
+  st_make_grid(sf,
+               0.005, # Kms
+               crs = st_crs(inner_cities),
+               what = "polygons",
+               square = FALSE
+               ) %>%
+    st_as_sf() %>% 
+    st_intersection(sf)
+}
+
+grid <- my_grid(inner_cities[1,])  %>% 
+  rbind(my_grid(inner_cities[2,])) %>% 
+  rbind(my_grid(inner_cities[3,]))
+
 ```
 
 
-```{r DA, fig.cap="**Fig x. Inner City Residential Development Application Approvals**", out.width="100%"}
+```{r DA, fig.cap="**Fig x. Inner City Residential Development Application Approvals**"}
 ggplot(data = da, aes(x=inner_city, y=av_bays)) +
   #geom_dotplot(binaxis='y', stackdir='center', method = "dotdensity", dotsize=0.5, show.legend = FALSE, fill = "white", alpha = 1, colour = "black") +
     geom_violin(show.legend = FALSE, aes(col = inner_city, fill = inner_city), alpha = 0.5) +
@@ -129,43 +143,14 @@ ggplot(data = da, aes(x=inner_city, y=av_bays)) +
 ```{r hex_map}
 #https://cran.r-project.org/web/packages/cartography/vignettes/cartography.html
 #https://rpubs.com/dieghernan/beautifulmaps_I
-library(ceramic)
-
-my_grid <- function(sf) {
-  st_make_grid(sf,
-               0.005, # Kms
-               crs = st_crs(inner_cities),
-               what = "polygons",
-               square = FALSE
-               ) %>%
-    st_as_sf() %>% 
-    st_intersection(sf)
-}
-
-grid <- my_grid(inner_cities[1,])  %>% 
-  rbind(my_grid(inner_cities[2,])) %>% 
-  rbind(my_grid(inner_cities[3,]))
-
-
-tmap_mode("view")
-qtm(grid)
-
-Sys.setenv(MAPBOX_API_KEY=key)
-
-
-bb <- st_bbox(inner_cities) 
-
-basemap <- cc_location(cbind(as.numeric(bb["xmin"]), as.numeric(bb["ymin"])), buffer = 1e5)
-
-
 tmap_mode("plot")
-
   tm_shape(inner_cities) +
     tm_polygons() +
     tm_facets(by = "label") +
     tm_shape(sf_lga_2016_aust) +
-    tm_fill() +
+    tm_fill(col = "grey55") +
     tm_shape(grid) +
-    tm_polygons("red")
+    tm_polygons("red") +
+    tm_layout(bg.color = "grey45")
 ```
 
