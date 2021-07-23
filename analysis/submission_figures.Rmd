@@ -1,0 +1,293 @@
+---
+title: "DevelopmentApplications"
+author: "Anthony Kimpton"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+library(spgwr)
+library(viridisLite)
+library(spdep)
+library(knitr)
+library(rgdal)
+library(tidyverse)
+library(janitor)
+library(ggplot2)
+library(sf)
+library(tmap)
+options(scipen = 999, digits = 3)
+opts_chunk$set(cache = TRUE, warning = FALSE, echo = FALSE, message = FALSE, dpi = 600, out.width="100%")
+# define coordinate reference systems (st_crs() collects crs from files)
+ref_coord <- "+proj=longlat +ellps=GRS80 +no_defs"
+ref_used <- "+proj=utm +zone=56 +south +ellps=GRS80 +units=m +no_defs"
+my.palette <- RColorBrewer::brewer.pal(9, 'Set1')
+my.greys <- RColorBrewer::brewer.pal(9, 'Greys')
+city.trio <- c(my.palette[3], my.palette[5], my.palette[4]) 
+trio <- c(my.palette[3], my.palette[2], my.palette[1])
+ocean <- my.greys[4]
+land <- my.greys[2]
+shore <- my.greys[6]
+map.diameter <- 60000
+```
+
+```{r inner_city_data}
+inner.city.sf <- readOGR('./../../Data/Australia/Census/1270055003_lga_2016_aust_shape','LGA_2016_AUST') %>% 
+  st_as_sf() %>%
+  clean_names() %>%
+  mutate(inner.city = ifelse(lga_name16 == "Sydney (C)", "Sydney", ifelse(lga_name16 == "Melbourne (C)", "Melbourne", NA))) %>% 
+  drop_na(inner.city) %>% 
+  st_transform(ref_used) %>% 
+  select(inner.city)
+
+inner.city.sf <- readOGR('./../../Data/Brisbane/SHP/SHP','City_Frame') %>% 
+  st_as_sf() %>%
+  clean_names() %>% 
+  st_transform(ref_used) %>% 
+  mutate(inner.city = "Brisbane") %>% 
+  select(inner.city) %>% 
+  rbind(inner.city.sf) %>% 
+  mutate(inner.city.ha = as.numeric(st_area(.))/10000) %>% 
+  mutate(inner.city = factor(inner.city, levels = c("Brisbane", "Sydney", "Melbourne")))
+
+
+my_sampler <- function(sampled.df, enclosing.df, sample.n) {
+  temp1 <- sampled.df %>%
+    mutate(row_id = row_number())
+  temp2 <- temp1 %>%
+    st_join(., enclosing.df, join = st_intersects) %>% 
+    drop_na(inner.city) %>%
+    select(-inner.city, -inner.city.ha) %>%
+    mutate(portion = sample.n) %>%
+    st_sample(size = .$portion, type = "random", exact = TRUE) %>%
+    st_sf() %>%
+    st_intersection(enclosing.df) %>%
+    st_join(., temp1, join = st_intersects) %>%
+    as_data_frame() %>%
+    drop_na(row_id) %>%
+    group_by(row_id) %>%
+    summarise(inner.city.proportion = n()/sample.n,
+              inner.city = first(inner.city)) %>%
+    select(row_id, inner.city, inner.city.proportion) %>% 
+    mutate(inner.city.proportion = ifelse(inner.city.proportion > 1.0, 1.0, inner.city.proportion))
+  temp1 %>%
+    left_join(temp2, by = "row_id") %>%
+    select(-row_id) %>%
+    mutate_if(is.numeric, funs(ifelse(is.na(.), 0, .))) %>% 
+    mutate_if(is.numeric, funs(ifelse(is.infinite(.), 0, .)))
+}
+# inner-city offstreet parking
+offstreet.poly.sf <- readOGR('./../../Data/Brisbane','SEQ-Park-Spaces-v2013') %>% #bris 2013
+  st_as_sf() %>%
+  clean_names() %>% 
+  st_transform(ref_used) %>% 
+  mutate(residential.offstreet.bays = ifelse(category_1 == "RESIDENTIAL", parks_2013, 0),
+         other.offstreet.bays = ifelse(category_1 != "RESIDENTIAL", parks_2013, 0),
+         residential.offstreet.m2 = NA,
+         other.offstreet.m2 = NA) %>%
+  select(residential.offstreet.bays, other.offstreet.bays, residential.offstreet.m2, other.offstreet.m2) 
+
+df1 <- read.csv("./../../Data/Sydney/FES2017 - Parking Data.csv") %>% #syd 2017
+  clean_names() %>%
+  as_tibble() %>% 
+  mutate(id = block,
+         residential.offstreet.bays = as.numeric(as.character(sum_of_tennantparkinginternal)) + as.numeric(as.character(sum_of_tennantparkingexternal)),
+         other.offstreet.bays = as.numeric(as.character(sum_of_publicparkinginternal)) + as.numeric(as.character(sum_of_publicparkingexternal))) %>% 
+  select(id, residential.offstreet.bays, other.offstreet.bays)
+
+offstreet.poly.sf <- readOGR('./../../Data/Sydney/FES2017_Employment_Zone_Data','FES2017_Employment_Zone_Data') %>%
+  st_as_sf() %>%
+  clean_names() %>% 
+  st_transform(ref_used) %>% 
+  mutate(id = as.numeric(as.character(objectid)),
+         residential.offstreet.m2 = NA,
+         other.offstreet.m2 = NA) %>% 
+  left_join(df1, by = "id") %>% 
+  select(residential.offstreet.bays, other.offstreet.bays, residential.offstreet.m2, other.offstreet.m2) %>% 
+  rbind(offstreet.poly.sf)
+
+df1 <- read.csv("./../../Data/Melbourne/Off-street_car_parking_2016.csv") %>% #melb 2016
+  clean_names() %>%
+  as_tibble() %>% 
+  mutate(id = block_id,
+         type = ifelse(parking_type != "Residential", "other.offstreet.bays", "residential.offstreet.bays")) %>%
+  group_by(id, type) %>%
+  summarize(parking_spaces = sum(parking_spaces)) %>% 
+  spread(type, parking_spaces, fill = 0)
+
+df1 <- read.csv("./../../Data/Melbourne/Floor_space_by_use_by_block2018.csv") %>%
+  clean_names() %>%
+  as_tibble() %>% 
+  filter(census_year == "2016") %>% 
+  mutate_all(~replace(., is.na(.), 0)) %>% 
+  mutate(id = block_id,
+         residential.offstreet.m2 = parking_private_covered + parking_private_uncovered,
+         other.offstreet.m2 = parking_commercial_covered + parking_commercial_uncovered) %>% 
+  select(id, residential.offstreet.m2, other.offstreet.m2) %>% 
+  left_join(df1, by = "id")
+
+offstreet.poly.sf <- readOGR('./../../Data/Melbourne/Blocks for Census of Land Use and Employment (CLUE) with business, employment and floor area counts','geo_export_3f3122c2-4cfc-489b-8bd1-590a8876ad0b') %>%
+  st_as_sf() %>%
+  clean_names() %>% 
+  st_transform(ref_used) %>% 
+  mutate(id = as.numeric(as.character(block_id))) %>% 
+  left_join(df1, by = "id") %>% 
+  select(residential.offstreet.bays, other.offstreet.bays, residential.offstreet.m2, other.offstreet.m2) %>% 
+  rbind(offstreet.poly.sf)
+
+offstreet.poly.sf <- my_sampler(offstreet.poly.sf, inner.city.sf, 100)
+
+bris.sample <- st_buffer(offstreet.poly.sf, 0.0) %>% # for determining how much of the inner city they sampled
+  st_intersection(st_buffer(inner.city.sf, 0.0)) %>% 
+  filter(inner.city == "Brisbane") %>% 
+  mutate(area.ha =  as.numeric(st_area(.))/10000) %>% 
+  as.tibble() %>%
+  group_by(inner.city) %>% 
+  summarise(sample_ha = sum(area.ha), 
+            total_ha = mean(inner.city.ha)) %>% 
+  mutate(sample.percent = sample_ha/total_ha*100)
+# inner-city onstreet parking
+onstreet.poly.sf <- readOGR("./../../Data/Melbourne/On-street Parking Bays", "geo_export_31ea2fa0-2503-4897-86c3-5067b4a40357") %>% #melb?
+  st_as_sf() %>%
+  clean_names() %>% 
+  mutate(id = meter_id) %>%
+  st_transform(ref_used) %>% 
+  select(id) %>% 
+  mutate(bay.area.m2 = round(as.numeric(st_area(.)),0),
+         onstreet.bay = 1)
+
+onstreet.poly.sf <- my_sampler(onstreet.poly.sf, inner.city.sf, 10)
+# inner-city onstreet sensors
+sensors.point.sf <- read.csv("./../../Data/Melbourne/On-street_Parking_Bay_Sensors.csv") %>% # bris2017
+  clean_names() %>%
+  as_tibble() %>%
+  mutate(id = bay_id,
+         sensor = 1) %>%
+  st_as_sf(coords = c("lon", "lat"), crs = ref_coord) %>% 
+  st_transform(ref_used) %>%
+  st_join(., inner.city.sf, join = st_intersects) %>% 
+  mutate(inner.city.proportion = ifelse(is.na(inner.city), 1, 0)) %>% 
+  select(-inner.city.ha)
+# inner-city onstreet meters
+meters.point.sf <- read.csv("./../../Data/Brisbane/Parking-Meter-locations.csv") %>% # bris2017
+  clean_names() %>%
+  as_tibble() %>%
+  mutate(bays.per.meter = veh_bays,
+         bays.per.meter = ifelse(bays.per.meter == 0, 1, bays.per.meter)) %>%
+  st_as_sf(coords = c("longitude", "latitude"), crs = ref_coord) %>% 
+  st_transform(ref_used) %>% 
+  select(bays.per.meter)
+
+meters.point.sf <- readOGR("./../../Data/Sydney/Parking_meters", "Parking_meters") %>% #syd?
+  st_as_sf() %>%
+  clean_names() %>% 
+  mutate(bays.per.meter = as.numeric(approx_pay_s)) %>%
+  st_transform(ref_used) %>% 
+  select(bays.per.meter) %>% 
+  rbind(meters.point.sf)
+
+df1 <- onstreet.poly.sf %>% 
+  as.tibble() %>% 
+  drop_na(id) %>% 
+  select(id) %>%
+  group_by(id) %>%
+  tally() %>%
+  rename(bays.per.meter = n)
+
+meters.point.sf <- read.csv("./../../Data/Melbourne/On-street_Car_Parking_Meters_with_Location.csv") %>% # melb?
+  clean_names() %>% 
+  as_tibble() %>%
+  mutate(id = meter_id) %>%
+  st_as_sf(coords = c("longitude", "latitude"), crs = ref_coord) %>% 
+  st_transform(ref_used) %>%
+  left_join(df1, by = "id") %>% 
+  select(bays.per.meter) %>% 
+  rbind(meters.point.sf) %>%
+  st_join(., inner.city.sf, join = st_intersects) %>% 
+  mutate(inner.city.proportion = ifelse(is.na(inner.city), 1, 0)) %>% 
+  select(-inner.city.ha)
+# inner city residents 2011 and 2016 (SA1)
+suburb.sf <- my_sampler(suburb.sf, inner.city.sf, 100)
+
+# 2011 inner city workers (SA2)
+inner.city.workers.2011.sf <- read.csv("./../../Data/Australia/Census/POW_MTWP2011.csv") %>%
+  clean_names() %>%
+  as_tibble() %>%
+  mutate(arriving.workers.2011 = select(., train:walked_only) %>%
+           rowSums(na.rm = TRUE),
+         id = sa2,
+         arriving.drivers.2011 = select(., matches("car|motorbike"), -contains("passenger")) %>%
+           rowSums(na.rm = TRUE)) %>%
+  select(id, arriving.workers.2011, arriving.drivers.2011)
+
+inner.city.workers.2011.sf <- readOGR("./../../Data/Australia/Census/2011_SA2_shape", "SA2_2011_AUST") %>% #SA2
+  st_as_sf() %>%
+  clean_names() %>%
+  mutate(id = as.numeric(as.character(sa2_main))) %>% 
+  select(id) %>% 
+  st_transform(ref_used) %>% 
+  left_join(inner.city.workers.2011.sf, by = "id") %>% 
+  st_join(., inner.city.sf, join = st_intersects) %>% 
+  drop_na(inner.city) %>% 
+  select(arriving.workers.2011, arriving.drivers.2011)
+
+inner.city.workers.2011.sf <- my_sampler(inner.city.workers.2011.sf, inner.city.sf, 100)
+
+# 2016 inner city workers (SA2)
+inner.city.workers.2016.sf <- read.csv("./../../Data/Australia/Census/POW_MTWP2016.csv") %>%
+  clean_names() %>%
+  as_tibble() %>%
+  mutate(arriving.workers.2016 = select(., train:walked_only) %>%
+           rowSums(na.rm = TRUE),
+         id = sa2,
+         arriving.drivers.2016 = select(., matches("car|motorbike"), -contains("passenger")) %>%
+           rowSums(na.rm = TRUE)) %>%
+  select(id, arriving.workers.2016, arriving.drivers.2016)
+
+inner.city.workers.2016.sf <- readOGR("./../../Data/Australia/Census/2016_SA2_shape", "SA2_2016_AUST") %>% #SA2
+  st_as_sf() %>%
+  clean_names() %>%
+  mutate(id = as.numeric(as.character(sa2_main16))) %>% 
+  select(id) %>% 
+  st_transform(ref_used) %>% 
+  left_join(inner.city.workers.2016.sf, by = "id") %>% 
+  st_join(., inner.city.sf, join = st_intersects) %>% 
+  drop_na(inner.city) %>% 
+  select(arriving.workers.2016, arriving.drivers.2016)
+
+inner.city.workers.2016.sf <- my_sampler(inner.city.workers.2016.sf, inner.city.sf, 100)
+```
+
+
+
+
+```{r DA_plot, fig.cap="**Figure x. Average parking spaces per inner city development application for Brisbane, Sydney, and Melbourne**", , out.width="50%"}
+#development applications
+dev.app <- read_csv("../data/Connor_s_DA_data.csv") %>%
+  clean_names() %>%
+  as_tibble() %>% 
+  mutate(application.ranked = row_number()) %>%
+  gather(key = "temp", value = "av.parking", brisbane:sydney) %>% 
+  mutate(inner.city = factor(ifelse(temp == "brisbane",
+                                    "Brisbane",
+                                    ifelse(temp == "sydney",
+                                           "Sydney",
+                                           "Melbourne")),
+                             levels = c("Brisbane", "Sydney", "Melbourne")))
+# violin plots
+ggplot(data = dev.app, aes(x=inner.city, y=av.parking, col = inner.city)) +
+  geom_violin(show.legend = FALSE) +
+  geom_dotplot(binaxis='y', stackdir='center', method = "histodot", dotsize=0.5, show.legend = FALSE, aes(fill = inner.city, alpha = 1.0)) +
+  stat_summary(fun.y=mean, geom="point", size=5, shape=18, show.legend = FALSE) +
+  geom_hline(yintercept=1, linetype="dashed") +
+  labs(y = "Parking Bays (average)") +
+  theme_bw() +
+  scale_fill_manual(values = city.trio) +
+  scale_color_manual(values = city.trio) +
+  theme_linedraw() +
+  theme(aspect.ratio = 0.7,
+        axis.title.x = element_blank(),
+        axis.text.x = element_text(color = "black", size = 15),
+        axis.title.y = element_text(color = "black", size = 18),
+        axis.text.y = element_text(color = "black", size = 15))
+```
