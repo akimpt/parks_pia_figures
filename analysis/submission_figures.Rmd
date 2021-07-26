@@ -14,7 +14,8 @@ library(ggplot2)
 library(sf)
 library(tmap)
 options(scipen = 999, digits = 3)
-opts_chunk$set(cache = FALSE, warning = FALSE, echo = FALSE, message = FALSE, dpi = 1200,
+opts_chunk$set(cache = FALSE, warning = FALSE, echo = FALSE,
+               message = FALSE, dpi = 1200,
                dev = 'png' ) #pdf format is too large for emailing
 
 # token
@@ -119,8 +120,7 @@ grid <- my_grid(inner_cities[1,])  %>%
   filter(bays > 0)
 ```
 
-
-```{r DA, fig.cap="Residential Development Applications Approved by Inner City Local Governments"}
+```{r DA}
 ggplot(data = da, aes(x=inner_city, y=av_bays)) +
   #geom_dotplot(binaxis='y', stackdir='center', method = "dotdensity", dotsize=0.5, show.legend = FALSE, fill = "white", alpha = 1, colour = "black") +
     geom_violin(show.legend = FALSE, aes(col = inner_city, fill = inner_city), alpha = 0.5) +
@@ -139,9 +139,11 @@ ggplot(data = da, aes(x=inner_city, y=av_bays)) +
         plot.title = element_text(color="black", size=13, face="bold.italic"))
 ```
 
+***Residential Development Applications Approved by Inner City Local Governments***
+
 \pagebreak
 
-```{r hex_map_arrange, fig.asp=1, fig.width=4, fig.cap="Known Parking by Inner City Local Governments"}
+```{r hex_map_arrange, fig.asp=1, fig.width=4}
 #https://cran.r-project.org/web/packages/cartography/vignettes/cartography.html
 #https://rpubs.com/dieghernan/beautifulmaps_I
 pal <- viridisLite::viridis(5)
@@ -186,9 +188,11 @@ l1 <- tm_shape(grid) +
 tmap_arrange(m1, m2, m3, l1, ncol = 2) 
 ```
 
+***Known Parking by Inner City Local Governments***
+
 \pagebreak
 
-```{r hex_map_panel, fig.asp=0.35, fig.cap="Known Parking by Inner City Local Governments"}
+```{r hex_map_panel, fig.asp=0.35, fig.cap="Known Parking by Inner City Local Governments", eval=FALSE}
 #https://cran.r-project.org/web/packages/cartography/vignettes/cartography.html
 #https://rpubs.com/dieghernan/beautifulmaps_I
 pal <- viridisLite::viridis(5)

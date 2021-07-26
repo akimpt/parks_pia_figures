@@ -1,8 +1,6 @@
 #JTW DATA READER
 
 # libraries
-if (!require('rstudioapi')) install.packages('rstudioapi', dependencies = TRUE)
-library(rstudioapi)
 if (!require('sf')) install.packages('sf', dependencies = TRUE)
 library(sf)
 if (!require('tidyverse')) install.packages('tidyverse', dependencies = TRUE)
@@ -13,9 +11,6 @@ if (!require('janitor')) install.packages('janitor', dependencies = TRUE)
 library(janitor)
 if (!require('readxl')) install.packages('readxl', dependencies = TRUE)
 library(readxl)
-
-#set script location as wd 
-setwd(dirname(rstudioapi::getActiveDocumentContext()$path))
 
 # parameters
 crs <- 4326
