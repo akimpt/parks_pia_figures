@@ -14,7 +14,8 @@ library(ggplot2)
 library(sf)
 library(tmap)
 options(scipen = 999, digits = 3)
-opts_chunk$set(cache = TRUE, warning = FALSE, echo = FALSE, message = FALSE, dpi = 600, out.width="100%")
+opts_chunk$set(cache = FALSE, warning = FALSE, echo = FALSE, message = FALSE, dpi = 1200,
+               dev = 'png' ) #pdf format is too large for emailing
 
 # token
 source("../src/mapbox_key.R")
@@ -34,13 +35,17 @@ if (exists("csv_off_street_car_parking_2016")) {
 
 inner_cities <- sf_lga_2016_aust %>%
   filter(lga_name16 == "Sydney (C)" | lga_name16 == "Melbourne (C)") %>% 
-  transmute(lga_name16,
-            label = ifelse(lga_name16 == "Sydney (C)", "City of Sydney", "City of Melbourne"))
+  transmute(lga_name16)
 
 inner_cities <- sf_city_frame %>% 
-  transmute(lga_name16 = "Brisbane City Council",
-            label = "Brisbane City Council City Frame") %>% 
-  rbind(inner_cities)
+  transmute(lga_name16 = "Brisbane City Council") %>% 
+  rbind(inner_cities) %>% 
+  mutate(label = ifelse(lga_name16 == "Brisbane City Council", "Inner Brisbane",
+                        ifelse(lga_name16 == "Sydney (C)", "Inner Sydney",
+                               "Inner Melbourne")),
+         label = factor(label, levels = c("Inner Brisbane",
+                                          "Inner Sydney",
+                                          "Inner Melbourne")))
 
 parking <- sf_seq_park_spaces_v2013 %>% 
   transmute(bays = parks_2013)
@@ -77,8 +82,6 @@ parking <- sf_geo_export_31ea2fa0_2503_4897_86c3_5067b4a40357 %>%
   transmute(bays = 1) %>% 
   rbind(parking)
 
-st_write(parking, "../data/points.shp")
-
 if(exists("sf_points")) {
   points <- sf_points
 } else {
@@ -97,7 +100,7 @@ da <- csv_connor_s_da_data %>%
 #grid
 my_grid <- function(sf) {
   st_make_grid(sf,
-               0.005, # Kms
+               0.003, # Kms
                crs = st_crs(inner_cities),
                what = "polygons",
                square = FALSE
@@ -108,12 +111,16 @@ my_grid <- function(sf) {
 
 grid <- my_grid(inner_cities[1,])  %>% 
   rbind(my_grid(inner_cities[2,])) %>% 
-  rbind(my_grid(inner_cities[3,]))
-
+  rbind(my_grid(inner_cities[3,])) %>% 
+  mutate(bays = lengths(st_intersects(., points)),
+         area = st_area(.),
+         perimeter = st_length(.),
+         one_length = perimeter/6) %>% 
+  filter(bays > 0)
 ```
 
 
-```{r DA, fig.cap="**Fig x. Inner City Residential Development Application Approvals**"}
+```{r DA, fig.cap="Residential Development Applications Approved by Inner City Local Governments"}
 ggplot(data = da, aes(x=inner_city, y=av_bays)) +
   #geom_dotplot(binaxis='y', stackdir='center', method = "dotdensity", dotsize=0.5, show.legend = FALSE, fill = "white", alpha = 1, colour = "black") +
     geom_violin(show.legend = FALSE, aes(col = inner_city, fill = inner_city), alpha = 0.5) +
@@ -129,13 +136,63 @@ ggplot(data = da, aes(x=inner_city, y=av_bays)) +
         axis.text.x = element_text(color = "black", size = 12),
         axis.title.y = element_text(color = "black", size = 12),
         axis.text.y = element_text(color = "black", size = 10),
-        plot.title = element_text(color="black", size=13, face="bold.italic")) +
-  ggtitle("Inner City Residential Development Application Approvals") 
+        plot.title = element_text(color="black", size=13, face="bold.italic"))
 ```
 
-```{r hex_map}
+\pagebreak
+
+```{r hex_map_arrange, fig.asp=1, fig.width=4, fig.cap="Known Parking by Inner City Local Governments"}
 #https://cran.r-project.org/web/packages/cartography/vignettes/cartography.html
 #https://rpubs.com/dieghernan/beautifulmaps_I
+pal <- viridisLite::viridis(5)
+tmap_mode("plot")
+mapper <- function(n, title) {
+  tm_shape(subset(inner_cities[n,])) +
+    tm_polygons() +
+    tm_shape(sf_lga_2016_aust) +
+    tm_fill(col = "grey55") +
+    tm_shape(grid) +
+    tm_polygons(col = "bays", style = "quantile", palette = pal,
+                border.col = "grey50",
+                legend.show = FALSE) +
+        tm_shape(inner_cities) +
+    tm_borders("red") + 
+    tm_layout(bg.color = "grey45",
+              panel.label.height = 1,
+              panel.label.size = 1,
+              panel.label.color = "white",
+              panel.label.bg.color = "black",
+              panel.show = TRUE,
+              panel.labels = title)}
+
+m1 <- mapper(1, "Inner Brisbane")
+
+m2 <- mapper(2, "Inner Sydney")
+
+m3 <- mapper(3, "Inner Melbourne")
+
+l1 <- tm_shape(grid) +
+  tm_polygons(col = "bays", style = "quantile",
+              palette = pal, title = "Known Parking Bays",
+                border.col = "grey50") +
+  tm_add_legend('symbol', 
+	col = c("white", "white"),
+	border.col = c("grey50", "red"),
+	labels = c('Hex Grid (300m)', "Local Gov/City Frame")) +
+  tm_layout(legend.only= T,
+            legend.title.size = 1.2,
+            legend.text.size = 1)
+
+tmap_arrange(m1, m2, m3, l1, ncol = 2) 
+```
+
+\pagebreak
+
+```{r hex_map_panel, fig.asp=0.35, fig.cap="Known Parking by Inner City Local Governments"}
+#https://cran.r-project.org/web/packages/cartography/vignettes/cartography.html
+#https://rpubs.com/dieghernan/beautifulmaps_I
+pal <- viridisLite::viridis(5)
+
 tmap_mode("plot")
   tm_shape(inner_cities) +
     tm_polygons() +
@@ -143,7 +200,17 @@ tmap_mode("plot")
     tm_shape(sf_lga_2016_aust) +
     tm_fill(col = "grey55") +
     tm_shape(grid) +
-    tm_polygons("red") +
-    tm_layout(bg.color = "grey45")
+    tm_polygons(col = "bays", style = "quantile", palette = pal, title = "Known Parking Bays",
+                border.col = "grey50") +
+        tm_shape(inner_cities) +
+    tm_borders("red") + 
+    tm_layout(bg.color = "grey45",
+              panel.label.height = 1,
+              panel.label.size = 1,
+              panel.label.color = "white",
+              panel.label.bg.color = "black") +
+  tm_add_legend('symbol', 
+	col = c("white", "white"),
+	border.col = c("grey50", "red"),
+	labels = c('Hex Grid (300m)', "Local Gov/City Frame")) 
 ```
-
